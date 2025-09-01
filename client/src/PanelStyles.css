@@ -1,0 +1,54 @@
+/* Layout */
+.editor-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background: #1e1e1e;
+  overflow: hidden;
+}
+
+/* Code Area */
+.code-area {
+  flex: 1;
+  background: #1e1e1e;
+  position: relative;
+  border: 2px solid red; /* Debug border */
+}
+
+/* Resizable Border */
+.resize-bar {
+  height: 6px;
+  background: yellow; /* Debug background */
+  cursor: row-resize;
+  transition: background 0.2s;
+  z-index: 100; /* Ensure it is above other elements */
+}
+.resize-bar:hover {
+  background: #007acc;
+}
+
+/* Output Panel */
+.output-panel {
+  background: #23272e;
+  border: 2px solid blue; /* Debug border */
+  border-top: 1px solid #252526;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.output-header {
+  background: #252526;
+  color: #cccccc;
+  font-size: 14px;
+  font-weight: bold;
+  padding: 8px 12px;
+  border-bottom: 1px solid #1e1e1e;
+}
+.output-content {
+  flex: 1;
+  padding: 12px;
+  color: #cccccc;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 13px;
+}
