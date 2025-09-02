@@ -24,7 +24,10 @@ import {
   VscNewFile,
   VscTrash,
   VscEdit,
+  VscCopy
 } from "react-icons/vsc";
+import { FaUserCircle, FaRobot } from 'react-icons/fa';
+import axios from "axios";
 
 const socket = io("http://localhost:3001");
 
@@ -143,6 +146,75 @@ const CollaborativeEditor = () => {
   const [copiedCode, setCopiedCode] = useState(null);
   const [chatMode, setChatMode] = useState("ai");
 
+  // --- Resizer logic for bottom panel ---
+  const [outputPanelHeight, setOutputPanelHeight] = useState(180);
+  const [isResizing, setIsResizing] = useState(false);
+  const minOutputPanelHeight = 90;
+  const maxOutputPanelHeight = 500;
+
+  const startResizing = (e) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
+  // --- Resizer logic for right panel ---
+  const [rightPanelWidth, setRightPanelWidth] = useState(320);
+  const [isResizingRight, setIsResizingRight] = useState(false);
+  const minRightPanelWidth = 240;
+  const maxRightPanelWidth = 500;
+
+  const startResizingRight = (e) => {
+    e.preventDefault();
+    setIsResizingRight(true);
+  };
+
+  // --- Resizer logic for left panel ---
+  const [explorerWidth, setExplorerWidth] = useState(240);
+  const [isResizingExplorer, setIsResizingExplorer] = useState(false);
+  const minExplorerWidth = 40;
+  const maxExplorerWidth = 400;
+
+  const startResizingExplorer = (e) => {
+    e.preventDefault();
+    setIsResizingExplorer(true);
+  };
+
+  const stopResizing = () => {
+    setIsResizing(false);
+    setIsResizingRight(false);
+    setIsResizingExplorer(false);
+  };
+
+  const resizePanels = (e) => {
+    if (isResizing) {
+      const newHeight = window.innerHeight - e.clientY - 40; // 40px for the top bar
+      if (newHeight >= minOutputPanelHeight && newHeight <= maxOutputPanelHeight) {
+        setOutputPanelHeight(newHeight);
+      }
+    }
+    if (isResizingRight) {
+      const newWidth = window.innerWidth - e.clientX;
+      if (newWidth >= minRightPanelWidth && newWidth <= maxRightPanelWidth) {
+        setRightPanelWidth(newWidth);
+      }
+    }
+    if (isResizingExplorer) {
+      const newWidth = e.clientX;
+      if (newWidth >= minExplorerWidth && newWidth <= maxExplorerWidth) {
+        setExplorerWidth(newWidth);
+      }
+    }
+  };
+
+  useEffect(() => {
+    document.addEventListener("mousemove", resizePanels);
+    document.addEventListener("mouseup", stopResizing);
+    return () => {
+      document.removeEventListener("mousemove", resizePanels);
+      document.removeEventListener("mouseup", stopResizing);
+    };
+  }, [isResizing, isResizingRight, isResizingExplorer]);
+
   // --- Collapsible Sidebars ---
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
@@ -152,7 +224,7 @@ const CollaborativeEditor = () => {
 
   const currentFile = files.find(f => f.name === activeFile) || { content: "" };
 
-  // --- Socket and AI logic (unchanged) ---
+  // --- Socket and AI logic ---
   useEffect(() => {
     const now = new Date();
     const hour = now.getHours();
@@ -223,7 +295,11 @@ const CollaborativeEditor = () => {
       setRemoteCursors(prev => ({ ...prev, [userId]: { cursor, selection } }));
     });
 
-    socket.on("error", (msg) => setError(msg));
+    socket.on("error", (msg) => {
+      console.error("Socket error:", msg);
+      setError(msg);
+    });
+    
     socket.on("languageChange", ({ language }) => setLanguage(language));
 
     socket.on("aiThinking", ({ roomId: eventRoomId }) => {
@@ -258,7 +334,7 @@ const CollaborativeEditor = () => {
     };
   }, [roomId]);
 
-  // --- Editor, File, and Chat Logic (unchanged) ---
+  // --- Editor, File, and Chat Logic ---
   const debounce = (fn, delay) => {
     let timer;
     return (...args) => {
@@ -296,12 +372,12 @@ const CollaborativeEditor = () => {
     if (aiInput.trim()) {
       const userMessage = { user: userName, msg: aiInput, timestamp: new Date() };
       setAiChat(chat => [...chat, userMessage]);
-      socket.emit("askAI", { 
-        roomId, 
-        prompt: aiInput, 
+      socket.emit("askAI", {
+        roomId,
+        prompt: aiInput,
         selectedCode: selectedCode || currentFile.content,
         filePath: activeFile,
-        language 
+        language
       });
       setAiInput("");
     }
@@ -321,22 +397,27 @@ const CollaborativeEditor = () => {
     return () => document.removeEventListener('keydown', handleEscape);
   }, []);
 
-  // --- File/Tab/Session/Context Menu Logic (unchanged) ---
+  // --- File/Tab/Session/Context Menu Logic ---
   const handleRunCode = async () => {
     setIsLoading(true);
     setOutput("Running...");
+    setError(null);
     try {
-      const res = await fetch("http://localhost:3001/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ language, code: currentFile.content })
+      const response = await axios.post("http://localhost:3001/run", {
+        language,
+        code: currentFile.content
       });
-      const data = await res.json();
-      setOutput(data.output);
+      setOutput(response.data.output);
     } catch (err) {
-      setOutput("Error connecting to code runner.");
+      console.error("Error executing code:", err);
+      if (err.response) {
+        setOutput(`Error: ${err.response.data.output}`);
+      } else {
+        setOutput("Error connecting to code runner. Check if the backend is running.");
+      }
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const handleCopyCode = () => {
@@ -365,11 +446,7 @@ const CollaborativeEditor = () => {
     const sessionId = prompt("Enter a name for this session:");
     if (!sessionId) return;
     try {
-      await fetch("http://localhost:3001/api/save-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, files }),
-      });
+      await axios.post("http://localhost:3001/api/save-session", { sessionId, files });
       toast.success("Session saved!");
     } catch (e) {
       toast.error("Failed to save session.");
@@ -380,12 +457,15 @@ const CollaborativeEditor = () => {
     const sessionId = prompt("Enter the session name to load:");
     if (!sessionId) return;
     try {
-      const res = await fetch(`http://localhost:3001/api/load-session/${sessionId}`);
-      if (!res.ok) throw new Error("Session not found");
-      const data = await res.json();
-      setFiles(data.files);
-      setActiveFile(data.files.name);
-      toast.success("Session loaded!");
+      const response = await axios.get(`http://localhost:3001/api/load-session/${sessionId}`);
+      const data = response.data;
+      if (data.files) {
+        setFiles(data.files);
+        setActiveFile(data.files[0].name); // Fix: Set active file to the first one in the loaded session
+        toast.success("Session loaded!");
+      } else {
+        toast.error("Session not found.");
+      }
     } catch (e) {
       toast.error("Failed to load session.");
     }
@@ -412,8 +492,11 @@ const CollaborativeEditor = () => {
 
   const deleteFile = (name) => {
     if (files.length === 1) return;
-    setFiles(files => files.filter(f => f.name !== name));
-    if (activeFile === name) setActiveFile(files[0].name);
+    const remainingFiles = files.filter(f => f.name !== name);
+    setFiles(remainingFiles);
+    if (activeFile === name) {
+      setActiveFile(remainingFiles[0]?.name || "");
+    }
   };
 
   const handleLanguageChange = (e) => {
@@ -452,40 +535,53 @@ const CollaborativeEditor = () => {
     deleteFile(name);
   };
 
-  // --- Chat Bubble Styling ---
-  const renderChatBubble = (msg, isAI, isSelf) => (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: isSelf ? "flex-end" : "flex-start",
-        marginBottom: 10,
-      }}
-    >
-      <div
-        style={{
-          background: isAI
-            ? "linear-gradient(90deg,#252526 80%,#007acc22 100%)"
-            : isSelf
-            ? "#007acc"
-            : "#252526",
-          color: isAI || isSelf ? "#fff" : "#cccccc",
-          borderRadius: 8,
-          padding: "8px 12px",
-          boxShadow: isAI
-            ? "0 2px 8px #007acc33"
-            : isSelf
-            ? "0 2px 8px #007acc44"
-            : "0 2px 8px #0002",
-          fontSize: 13,
-          maxWidth: 260,
-          wordBreak: "break-word",
-        }}
-      >
-        {msg}
+  const renderMessageContent = (msg) => {
+    if (!msg) return null;
+    const parts = msg.split(/```/);
+    return parts.map((part, index) => {
+      if (index % 2 === 1) {
+        const lines = part.trim().split('\n');
+        const lang = lines[0].trim();
+        const code = lines.slice(1).join('\n').trim();
+        const handleCopy = () => {
+          navigator.clipboard.writeText(code);
+          toast.success("Code copied to clipboard!", { autoClose: 1000, hideProgressBar: true });
+        };
+        return (
+          <div key={index} className="vsc-chat-codeblock">
+            <div className="vsc-chat-code-header">
+              <span>{lang || 'Code'}</span>
+              <button onClick={handleCopy} className="vsc-copy-btn">
+                <VscCopy /> Copy code
+              </button>
+            </div>
+            <pre className="vsc-chat-code-content">
+              <code>{code}</code>
+            </pre>
+          </div>
+        );
+      } else {
+        return <span key={index}>{part}</span>;
+      }
+    });
+  };
+
+  const renderChatBubble = (c, isAI, isSelf) => {
+    const icon = isAI ? <FaRobot /> : <FaUserCircle />;
+    const userNameDisplay = isAI ? 'AI Assistant' : c.user;
+    return (
+      <div key={c.timestamp + (c.user === "AI" ? "ai" : "user")} className={`vsc-chat-message ${isAI ? 'vsc-ai-message' : 'vsc-user-message'}`}>
+        <div className="vsc-chat-avatar">{icon}</div>
+        <div className="vsc-chat-content">
+          <div className="vsc-chat-header">
+            <span className="vsc-chat-user">{userNameDisplay}</span>
+            <span className="vsc-chat-time">{formatTime(c.timestamp)}</span>
+          </div>
+          <div className="vsc-chat-text">{renderMessageContent(c.msg)}</div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // --- Main Render ---
   return (
@@ -513,7 +609,7 @@ const CollaborativeEditor = () => {
 
       <div className="vsc-main">
         {/* Explorer Sidebar */}
-        <div className={`vsc-sidebar${explorerOpen ? "" : " closed"}`}>
+        <div className={`vsc-sidebar${explorerOpen ? "" : " closed"}`} style={{ width: explorerOpen ? `${explorerWidth}px` : '40px' }}>
           <div className="vsc-sidebar-header">
             <button
               className="vsc-sidebar-toggle"
@@ -558,7 +654,7 @@ const CollaborativeEditor = () => {
                         className="vsc-file-action"
                         onClick={e => {
                           e.stopPropagation();
-                          closeTab(f.name);
+                          deleteFile(f.name);
                         }}
                         title="Delete"
                       >
@@ -571,7 +667,7 @@ const CollaborativeEditor = () => {
             </div>
           )}
         </div>
-
+        <div className="vsc-resize-bar-vertical" onMouseDown={startResizingExplorer} />
         {/* Main Editor Area */}
         <div className="vsc-editor-area">
           {/* Tabs */}
@@ -637,8 +733,9 @@ const CollaborativeEditor = () => {
               }}
             />
           </div>
+          <div className="vsc-resize-bar-horizontal" onMouseDown={startResizing} />
           {/* Output Panel */}
-          <div className="vsc-output-panel">
+          <div className="vsc-output-panel" style={{ height: `${outputPanelHeight}px` }}>
             <div className="vsc-output-header">
               <span>OUTPUT</span>
               <div className="vsc-output-actions">
@@ -657,9 +754,9 @@ const CollaborativeEditor = () => {
             </div>
           </div>
         </div>
-
+        <div className="vsc-resize-bar-vertical" onMouseDown={startResizingRight} />
         {/* Right Panel: AI/Chat */}
-        <div className={`vsc-right-panel${rightPanelOpen ? "" : " closed"}`}>
+        <div className={`vsc-right-panel${rightPanelOpen ? "" : " closed"}`} style={{ width: `${rightPanelOpen ? rightPanelWidth : 40}px` }}>
           <div className="vsc-right-header">
             <button
               className="vsc-right-toggle"
@@ -696,10 +793,10 @@ const CollaborativeEditor = () => {
               <div className="vsc-right-content" ref={chatMode === "ai" ? aiChatBoxRef : chatBoxRef}>
                 {chatMode === "ai"
                   ? aiChat.map((c, i) =>
-                      renderChatBubble(c.msg, c.user === "AI", c.user === userName)
+                      renderChatBubble(c, c.user === "AI", c.user === userName)
                     )
                   : chat.map((c, i) =>
-                      renderChatBubble(c.msg, false, c.user === userName)
+                      renderChatBubble(c, false, c.user === userName)
                     )}
                 {aiThinking && chatMode === "ai" && (
                   <div className="vsc-ai-thinking">AI is thinking...</div>
@@ -834,7 +931,6 @@ const CollaborativeEditor = () => {
         background: #1e1e1e;
       }
       .vsc-sidebar {
-        width: 240px;
         min-width: 40px;
         background: #21222c;
         border-right: 1px solid #232336;
@@ -994,11 +1090,35 @@ const CollaborativeEditor = () => {
         font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
         border-bottom: 1px solid #232336;
       }
+      .vsc-resize-bar-horizontal {
+        height: 6px;
+        background: #23272e;
+        cursor: ns-resize;
+        transition: background 0.2s;
+        z-index: 100;
+        border-top: 1px solid #252526;
+        border-bottom: 1px solid #252526;
+      }
+      .vsc-resize-bar-horizontal:hover {
+        background: #007acc;
+      }
+      .vsc-resize-bar-vertical {
+        width: 6px;
+        background: #23272e;
+        cursor: ew-resize;
+        transition: background 0.2s;
+        z-index: 100;
+        border-left: 1px solid #252526;
+        border-right: 1px solid #252526;
+      }
+      .vsc-resize-bar-vertical:hover {
+        background: #007acc;
+      }
       .vsc-output-panel {
         background: #23272e;
         border-top: 1px solid #232336;
         min-height: 90px;
-        max-height: 180px;
+        max-height: 500px;
         display: flex;
         flex-direction: column;
       }
@@ -1042,7 +1162,6 @@ const CollaborativeEditor = () => {
         margin-top: 8px;
       }
       .vsc-right-panel {
-        width: 320px;
         min-width: 40px;
         background: #232336;
         border-left: 1px solid #232336;
@@ -1241,8 +1360,107 @@ const CollaborativeEditor = () => {
         scrollbar-width: thin;
         scrollbar-color: #2a2d2e #232336;
       }
-      `}
-      </style>
+
+      /* New Chat Styles */
+      .vsc-chat-message {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 24px;
+      }
+      .vsc-chat-message.vsc-user-message {
+        flex-direction: row;
+      }
+      .vsc-chat-message.vsc-ai-message {
+        flex-direction: row;
+      }
+      .vsc-chat-avatar {
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        color: #fff;
+        border-radius: 50%;
+        background-color: #007acc;
+      }
+      .vsc-ai-message .vsc-chat-avatar {
+        background-color: #4ec9b0;
+      }
+      .vsc-chat-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .vsc-chat-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+      .vsc-chat-user {
+        font-weight: 600;
+        font-size: 14px;
+        color: #fff;
+      }
+      .vsc-chat-time {
+        font-size: 12px;
+        color: #8a8fa3;
+      }
+      .vsc-chat-text {
+        color: #cccccc;
+        font-size: 13px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .vsc-chat-codeblock {
+        background: #0d0d0d;
+        border: 1px solid #252526;
+        border-radius: 6px;
+        margin-top: 12px;
+        margin-bottom: 12px;
+        overflow: hidden;
+      }
+      .vsc-chat-code-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #23272e;
+        padding: 6px 12px;
+        font-size: 12px;
+        color: #8a8fa3;
+        font-weight: 500;
+        border-bottom: 1px solid #252526;
+      }
+      .vsc-copy-btn {
+        background: #3c3f41;
+        color: #cccccc;
+        border: none;
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        transition: background 0.15s, color 0.15s;
+      }
+      .vsc-copy-btn:hover {
+        background: #007acc;
+        color: #fff;
+      }
+      .vsc-chat-code-content {
+        padding: 12px;
+        overflow-x: auto;
+      }
+      .vsc-chat-code-content code {
+        font-family: 'Fira Code', 'Consolas', monospace;
+        font-size: 13px;
+      }
+      `}</style>
     </div>
   );
 };
